@@ -1,0 +1,59 @@
+---
+- name: Create Skodjob-CI namespace on Infra cluster
+  kubernetes.core.k8s:
+    kubeconfig: "{{ kubeconfig_path }}/{{ infra_context_name }}"
+    verify_ssl: no
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: "{{ infra_workflow_namespace }}"
+        labels:
+          project: "skodjob"
+          secret: "cert-manager"
+
+- name: "Get signed certificate"
+  shell: "oc extract secret/tealc-signed-certificate -n {{ infra_workflow_namespace }} --to=- --keys=tls.crt"
+  environment:
+    KUBECONFIG: "{{ kubeconfig_path }}/{{ infra_context_name }}"
+  register: fullchain_certificate_out
+
+- name: "Get signed certificate key"
+  shell: "oc extract secret/tealc-signed-certificate -n {{ infra_workflow_namespace }} --to=- --keys=tls.key"
+  environment:
+    KUBECONFIG: "{{ kubeconfig_path }}/{{ infra_context_name }}"
+  register: key_certificate_out
+
+- name: Apply Argo Workflow CRDs
+  kubernetes.core.k8s:
+    kubeconfig: "{{ kubeconfig_path }}/{{ infra_context_name }}"
+    verify_ssl: no
+    state: present
+    apply: yes
+    namespace: "{{ infra_workflow_namespace }}"
+    template: templates/argo/workflow-install/install.yaml.j2
+
+- name: Expose Argo Workflow with a Route
+  kubernetes.core.k8s:
+    kubeconfig: "{{ kubeconfig_path }}/{{ infra_context_name }}"
+    verify_ssl: no
+    state: present
+    apply: yes
+    namespace: "{{ infra_workflow_namespace }}"
+    definition:
+      apiVersion: route.openshift.io/v1
+      kind: Route
+      metadata:
+        name: argo-server
+        namespace: "{{ infra_workflow_namespace }}"
+      spec:
+        host: "workflow.apps.{{ infra_root_domain }}"
+        to:
+          kind: Service
+          name: argo-server
+        port:
+          targetPort: 2746
+        tls:
+          termination: passthrough
+          insecureEdgeTerminationPolicy: Redirect
